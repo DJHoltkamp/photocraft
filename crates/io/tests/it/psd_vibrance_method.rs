@@ -63,10 +63,12 @@ fn set_vibrance(doc: &mut Document, vibrance: f32, saturation: f32) {
 }
 
 /// A layer in Photoshop's newer method opens as an editable Vibrance with a note about its
-/// preview, and every save after an edit, through PSD or `.pcraft`, keeps the method.
+/// preview, and every save after an edit, through PSD or `.pcraft`, keeps the method and the
+/// keys the model doesn't carry (here `tint`).
 #[test]
 fn editing_a_modern_vibrance_keeps_its_method() {
-    let modern = photoshop_vib(&[("vibrance", Value::Integer(28)), ("Strt", Value::Integer(-7)), ("useLegacy", Value::Boolean(false))]);
+    let tint = Value::Integer(12);
+    let modern = photoshop_vib(&[("vibrance", Value::Integer(28)), ("Strt", Value::Integer(-7)), ("useLegacy", Value::Boolean(false)), ("tint", tint.clone())]);
     for depth in [SampleType::U8, SampleType::U16, SampleType::F32] {
         let opened = reopen(&doc_with(depth, modern.clone()), "x.psd");
         let notes = vibrance_notes(&opened);
@@ -80,6 +82,7 @@ fn editing_a_modern_vibrance_keeps_its_method() {
         let edited = export(&opened, "x.psd", &ExportOptions::default()).unwrap().bytes;
         let d = saved_vib(&edited);
         assert_eq!(d.get("useLegacy"), Some(&Value::Boolean(false)), "{depth:?}: the method survives the edit");
+        assert_eq!(d.get("tint"), Some(&tint), "{depth:?}: so do keys the model doesn't carry");
         assert_eq!((d.get("vibrance"), d.get("Strt")), (Some(&Value::Integer(29)), Some(&Value::Integer(-7))), "{depth:?}");
         let reopened = import("x.psd", &edited).unwrap();
         assert_eq!(vibrance_notes(&reopened).len(), 1, "{depth:?}: still the newer method");
@@ -95,6 +98,7 @@ fn editing_a_modern_vibrance_keeps_its_method() {
         set_vibrance(&mut native, 40.0, 0.0);
         let d = saved_vib(&export(&native, "x.psd", &ExportOptions::default()).unwrap().bytes);
         assert_eq!(d.get("useLegacy"), Some(&Value::Boolean(false)), "{depth:?}: via .pcraft");
+        assert_eq!(d.get("tint"), Some(&tint), "{depth:?}: tint via .pcraft");
         assert_eq!((d.get("vibrance"), d.get("Strt")), (Some(&Value::Integer(40)), None), "{depth:?}: 0 is omitted, as Photoshop omits it");
     }
 }
