@@ -625,13 +625,16 @@ fn photoshop_vib(items: &[(&str, Value)]) -> Vec<u8> {
     b
 }
 
+/// A `vibA` block's keys and values in stored order, to check what an edit kept and where.
 fn vib_keys(data: &[u8]) -> Vec<(String, Value)> {
     versioned(data).unwrap().items.into_iter().map(|(k, v)| (String::from_utf8_lossy(k.as_bytes()).into_owned(), v)).collect()
 }
 
+/// Editing the sliders rewrites only them in the file's own `vibA` descriptor, so Photoshop's
+/// method switch and the keys the model doesn't carry survive the save (#8838).
 #[test]
 fn vibrance_edit_keeps_the_files_method_and_other_keys() {
-    // Photoshop 27's newer method (#8838): editing the slider must not drop `useLegacy` false.
+    // Photoshop's newer method: editing the slider must not drop `useLegacy` false.
     let legacy_off = ("useLegacy", Value::Boolean(false));
     let original = photoshop_vib(&[("vibrance", Value::Integer(28)), ("Strt", Value::Integer(-7)), legacy_off.clone()]);
     assert_eq!(original.len() % 4, 0);
@@ -683,6 +686,25 @@ fn vibrance_edit_keeps_the_files_method_and_other_keys() {
     let before = v17.clone();
     assert!(!retarget_vibrance(&mut v17, &target));
     assert_eq!(v17, before);
+}
+
+/// Only an explicit `useLegacy` false is Photoshop's newer Vibrance method: a missing key is how
+/// legacy layers (and PhotoCraft's own) are stored, and anything unreadable is not guessed.
+#[test]
+fn newer_vibrance_method_is_an_explicit_use_legacy_false() {
+    let sliders = [("vibrance", Value::Integer(28)), ("Strt", Value::Integer(-7))];
+    let with = |m: Option<Value>| photoshop_vib(&[sliders.as_slice(), m.map(|v| ("useLegacy", v)).as_slice()].concat());
+    assert!(is_newer_vibrance(&with(Some(Value::Boolean(false)))));
+    assert!(!is_newer_vibrance(&with(Some(Value::Boolean(true)))));
+    assert!(!is_newer_vibrance(&with(None)));
+    assert!(!is_newer_vibrance(&with(Some(Value::Integer(0)))), "a non-boolean switch is not read as one");
+    assert!(!is_newer_vibrance(&write(&Adjustment::Vibrance { vibrance: 10.0, saturation: 5.0 })[0].1), "PhotoCraft writes the legacy method");
+    let newer = with(Some(Value::Boolean(false)));
+    for n in 0..newer.len() {
+        let _ = is_newer_vibrance(&newer[..n]);
+    }
+    assert!(!is_newer_vibrance(&[]));
+    assert!(newer_vibrance_warning("Vibrance 1").starts_with("layer \"Vibrance 1\": its Vibrance uses Photoshop's newer method"));
 }
 
 #[test]

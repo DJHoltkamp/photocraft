@@ -384,6 +384,19 @@ pub(crate) fn retarget_vibrance(data: &mut Vec<u8>, target: &Adjustment) -> bool
     true
 }
 
+/// `true` when a `vibA` block selects Photoshop's newer Vibrance method (`useLegacy` false). The
+/// layer opens as a Vibrance and keeps the method on save ([`retarget_vibrance`]), but PhotoCraft
+/// previews it with the legacy method. An unreadable block is `false`: it opens unsupported.
+pub(crate) fn is_newer_vibrance(data: &[u8]) -> bool {
+    versioned(data).is_some_and(|d| matches!(d.get("useLegacy"), Some(Value::Boolean(false))))
+}
+
+/// The open note for a layer [`is_newer_vibrance`] holds, so its legacy-method preview is not
+/// mistaken for Photoshop's look (#8838).
+pub(crate) fn newer_vibrance_warning(layer: &str) -> String {
+    format!("layer \"{layer}\": its Vibrance uses Photoshop's newer method, which PhotoCraft previews with the legacy method; the method is kept when saved")
+}
+
 /// `true` for a `grdm` block exactly as older PhotoCraft builds wrote it: [`write_gradient_map`]'s
 /// output without the two padding bytes, which makes Photoshop refuse the file (#8070). Blocks
 /// from other writers, whatever their length, are not matched.

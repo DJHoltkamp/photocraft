@@ -1,9 +1,10 @@
 //! Editing a Photoshop Vibrance layer keeps the file's Vibrance method (#8838).
 //!
 //! Photoshop (27.11 in the issue) marks its newer Vibrance method with `useLegacy` false in the
-//! `vibA` descriptor, and a block without the key opens with the legacy method. The model carries only the two sliders,
-//! so the block regenerated on an edit dropped the key: the edited layer reopened in Photoshop
-//! with the legacy method's look.
+//! `vibA` descriptor, and a block without the key opens with the legacy method. The model carries
+//! only the two sliders, so the block regenerated on an edit dropped the key: the edited layer
+//! reopened in Photoshop with the legacy method's look. PhotoCraft previews the newer method with
+//! the legacy one, so opening such a layer says so.
 
 use crate::common;
 
@@ -45,20 +46,33 @@ fn doc_with(depth: SampleType, block: Vec<u8>) -> Document {
     doc
 }
 
-fn reopen(doc: &Document, path: &str) -> Document {
+/// Saves `doc` in `path`'s format and opens the result, warnings included.
+fn reopen(doc: &Document, path: &str) -> ImportResult {
     let saved = export(doc, path, &ExportOptions::default()).unwrap().bytes;
-    import(path, &saved).unwrap().document
+    import(path, &saved).unwrap()
 }
 
+/// The open warnings that name the Vibrance layer.
+fn vibrance_notes(opened: &ImportResult) -> Vec<&String> {
+    opened.warnings.iter().filter(|w| w.contains("\"Vibrance 1\"")).collect()
+}
+
+/// Sets the layer's sliders, as an edit in the Properties panel does.
 fn set_vibrance(doc: &mut Document, vibrance: f32, saturation: f32) {
     doc.layers[1].content = LayerContent::Adjustment(Adjustment::Vibrance { vibrance, saturation });
 }
 
+/// A layer in Photoshop's newer method opens as an editable Vibrance with a note about its
+/// preview, and every save after an edit, through PSD or `.pcraft`, keeps the method.
 #[test]
 fn editing_a_modern_vibrance_keeps_its_method() {
     let modern = photoshop_vib(&[("vibrance", Value::Integer(28)), ("Strt", Value::Integer(-7)), ("useLegacy", Value::Boolean(false))]);
     for depth in [SampleType::U8, SampleType::U16, SampleType::F32] {
-        let mut opened = reopen(&doc_with(depth, modern.clone()), "x.psd");
+        let opened = reopen(&doc_with(depth, modern.clone()), "x.psd");
+        let notes = vibrance_notes(&opened);
+        assert_eq!(notes.len(), 1, "{depth:?}: {:?}", opened.warnings);
+        assert!(notes[0].contains("newer method") && notes[0].contains("legacy method"), "{depth:?}: {}", notes[0]);
+        let mut opened = opened.document;
         assert_eq!(opened.layers[1].content, LayerContent::Adjustment(Adjustment::Vibrance { vibrance: 28.0, saturation: -7.0 }), "{depth:?}");
 
         // The issue's edit: Vibrance 28 to 29, Saturation unchanged.
@@ -67,14 +81,17 @@ fn editing_a_modern_vibrance_keeps_its_method() {
         let d = saved_vib(&edited);
         assert_eq!(d.get("useLegacy"), Some(&Value::Boolean(false)), "{depth:?}: the method survives the edit");
         assert_eq!((d.get("vibrance"), d.get("Strt")), (Some(&Value::Integer(29)), Some(&Value::Integer(-7))), "{depth:?}");
-        let reopened = import("x.psd", &edited).unwrap().document;
-        assert_eq!(reopened.layers[1].content, opened.layers[1].content, "{depth:?}");
+        let reopened = import("x.psd", &edited).unwrap();
+        assert_eq!(vibrance_notes(&reopened).len(), 1, "{depth:?}: still the newer method");
+        assert_eq!(reopened.document.layers[1].content, opened.layers[1].content, "{depth:?}");
         // Saving the reopened file again changes nothing.
-        let again = export(&reopened, "x.psd", &ExportOptions::default()).unwrap().bytes;
+        let again = export(&reopened.document, "x.psd", &ExportOptions::default()).unwrap().bytes;
         assert_eq!(saved_vib(&again), d, "{depth:?}");
 
-        // Through the native format: the file's block travels with the layer.
-        let mut native = reopen(&opened, "x.pcraft");
+        // Through the native format: the file's block travels with the layer, and so does the note.
+        let native = reopen(&opened, "x.pcraft");
+        assert_eq!(vibrance_notes(&native).len(), 1, "{depth:?}: .pcraft open: {:?}", native.warnings);
+        let mut native = native.document;
         set_vibrance(&mut native, 40.0, 0.0);
         let d = saved_vib(&export(&native, "x.psd", &ExportOptions::default()).unwrap().bytes);
         assert_eq!(d.get("useLegacy"), Some(&Value::Boolean(false)), "{depth:?}: via .pcraft");
@@ -82,20 +99,27 @@ fn editing_a_modern_vibrance_keeps_its_method() {
     }
 }
 
+/// Layers in the legacy method, Photoshop's or PhotoCraft's own, stay legacy through an edit and
+/// open without a note: PhotoCraft renders them as Photoshop does.
 #[test]
 fn editing_a_legacy_vibrance_stays_legacy() {
     // The shape of the Photoshop-authored oracles (adjustments/rgb8/vibrance.psd): no method key.
     let legacy = photoshop_vib(&[("vibrance", Value::Integer(60)), ("Strt", Value::Integer(-15))]);
-    let mut opened = reopen(&doc_with(SampleType::U8, legacy), "x.psd");
+    let opened = reopen(&doc_with(SampleType::U8, legacy), "x.psd");
+    assert_eq!(vibrance_notes(&opened), Vec::<&String>::new());
+    let mut opened = opened.document;
     set_vibrance(&mut opened, -20.0, 35.0);
     let d = saved_vib(&export(&opened, "x.psd", &ExportOptions::default()).unwrap().bytes);
     assert_eq!(d.get("useLegacy"), None);
     assert_eq!((d.get("vibrance"), d.get("Strt")), (Some(&Value::Integer(-20)), Some(&Value::Integer(35))));
+    assert_eq!(vibrance_notes(&reopen(&opened, "x.pcraft")), Vec::<&String>::new());
     // A Vibrance made in PhotoCraft has no file block: it is written fresh, with the legacy method
     // PhotoCraft renders.
     let mut fresh = Document::new("v", Size::new(6, 4), ColorMode::Rgb, SampleType::U8);
     fresh.layers.push(Layer::new("Vibrance 1", LayerContent::Adjustment(Adjustment::Vibrance { vibrance: 10.0, saturation: 5.0 })));
-    let d = saved_vib(&export(&fresh, "x.psd", &ExportOptions::default()).unwrap().bytes);
+    let saved = export(&fresh, "x.psd", &ExportOptions::default()).unwrap().bytes;
+    let d = saved_vib(&saved);
     assert_eq!(d.get("useLegacy"), None);
     assert_eq!((d.get("vibrance"), d.get("Strt")), (Some(&Value::Integer(10)), Some(&Value::Integer(5))));
+    assert_eq!(vibrance_notes(&import("x.psd", &saved).unwrap()), Vec::<&String>::new());
 }
