@@ -506,6 +506,20 @@ mod shapes {
         assert_eq!(sub.segments.len(), 8);
         assert_eq!(sub.segments[3][2], p(5.0, 20.0));
     }
+
+    /// A callout rectangle (`ShCR`) whose box runs right to left (x0 > x1) panicked in
+    /// `f64::clamp` (min > max), found by the `stream` fuzz target. It now reads, inside its box.
+    #[test]
+    fn callout_rectangle_with_a_reversed_box_reads_inside_it() {
+        let node = |b: Vec<f64>| F::Def(100, vec![tag(b"ShpN")], vec![(tag(b"ShpB"), F::F64s(b)), (tag(b"Shpe"), F::Def(10_100, vec![tag(b"ShCR")], vec![]))]);
+        for b in [vec![10.0_f64, 0.0, 0.0, 20.0], vec![6.8e38, 0.0, 10.0, 20.0]] {
+            let (lo, hi) = (b[0].min(b[2]), b[0].max(b[2]));
+            let document = read(vec![node(b)], 100);
+            let sub = &path(&document).subpaths[0];
+            let points = std::iter::once(&sub.start).chain(sub.segments.iter().flatten());
+            assert!(points.into_iter().all(|q| q.x.is_finite() && q.y.is_finite() && (lo..=hi).contains(&q.x)), "{sub:?}");
+        }
+    }
 }
 
 /// Aggregate materialized-pixel admission (#4960). The entry limits bound what the archive
