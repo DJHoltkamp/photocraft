@@ -182,6 +182,12 @@ fn not_a_key_frame(mut c: Vec<u8>) -> Vec<u8> {
     c
 }
 
+/// One stray byte after the picture chunk: the `ANMF` chunk around it becomes odd-sized.
+fn odd_sized_frame(mut c: Vec<u8>) -> Vec<u8> {
+    c.push(0);
+    c
+}
+
 #[test]
 fn a_frame_with_alpha_comes_back() {
     let a = with_alpha_frame(animated(6, 4, &[part(RED, 6, 4, 50)]), [6, 4], as_is);
@@ -195,12 +201,17 @@ fn a_frame_with_alpha_comes_back() {
 /// A frame with alpha whose picture isn't a VP8 key frame of its `ANMF` header's size panicked
 /// inside `image-webp` 0.2.4 (out-of-bounds indexing), found by the `decode_webp` fuzz target:
 /// larger than the header, under another FourCC (decoded as VP8 all the same), or a non-key frame
-/// (decoded as 0x0). It is refused like a damaged frame: an error when it is the first, the
-/// frames before it otherwise.
+/// (decoded as 0x0). An odd-sized `ANMF` chunk, after which `image-webp` would read the next frame
+/// one byte early, is refused too. Each is refused like a damaged frame: an error when it is the
+/// first, the frames before it otherwise.
 #[test]
 fn a_frame_with_alpha_that_is_not_its_headers_size_is_refused() {
-    let cases: [(&str, [u32; 2], Patch); 3] =
-        [("larger", [6, 1], as_is), ("renamed and larger", [6, 1], renamed), ("not a key frame", [6, 4], not_a_key_frame)];
+    let cases: [(&str, [u32; 2], Patch); 4] = [
+        ("larger", [6, 1], as_is),
+        ("renamed and larger", [6, 1], renamed),
+        ("not a key frame", [6, 4], not_a_key_frame),
+        ("odd-sized", [6, 4], odd_sized_frame),
+    ];
     for (what, header, picture) in cases {
         let later = with_alpha_frame(animated(6, 4, &[part(GREEN, 6, 4, 50)]), header, picture);
         let f = frames(&later);

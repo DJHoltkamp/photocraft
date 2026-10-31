@@ -63,9 +63,15 @@ fn vp8_size(frame: &[u8]) -> Option<(u32, u32)> {
 /// decodes the next chunk as VP8 whatever its FourCC, skips the size check it makes for frames
 /// without alpha, and indexes the frame's buffers by the picture's own size (0x0 for a non-key
 /// frame): it panics (found by the `decode_webp` fuzz target), so the frame is refused first.
+/// An odd-sized `ANMF` chunk is refused too: a well-formed one is always even (a 16-byte header
+/// and padded chunks), and `image-webp` steps to the next frame without the padding byte, so the
+/// frames after it would not be the ones checked here.
 fn first_inconsistent_frame(bytes: &[u8]) -> Option<u32> {
     let frames = chunks(bytes.get(12..)?).filter(|(id, _)| *id == b"ANMF");
     frames.zip(0u32..).find_map(|((_, frame), i)| {
+        if frame.len() % 2 == 1 {
+            return Some(i);
+        }
         let header = (size24(frame, 6)?, size24(frame, 9)?);
         let mut inner = chunks(frame.get(16..)?);
         if inner.next()?.0 != b"ALPH" {
