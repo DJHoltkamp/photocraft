@@ -172,14 +172,22 @@ pub(crate) fn shape(r: &mut Reader, shape: ObjId, b: [f64; 4], world: Affine) ->
         }
     };
     let mut path = Path { subpaths: vec![sub] };
+    let mut multi = false;
     if class == Tag::of(b"ShCg") {
         let hole = num(r, shape, b"Hole").unwrap_or(0.3).clamp(0.0, 0.9);
         if hole > 0.0 {
             path.subpaths.push(ellipse(cx, cy, rx * hole, ry * hole));
         }
-        return Some((path, true));
+        multi = true;
     }
-    Some((path, false))
+    // A box whose size overflows (finite corners far apart) gives infinite or NaN outline points;
+    // its corners are finite, so the box itself stands in.
+    let finite = |p: &Point| p.x.is_finite() && p.y.is_finite();
+    if !path.subpaths.iter().all(|s| finite(&s.start) && s.segments.iter().flatten().all(finite)) {
+        r.warn("a parametric shape too large to compute (imported as its box)");
+        return Some((Path { subpaths: vec![rectangle_sub(x0, y0, x1, y1)] }, false));
+    }
+    Some((path, multi))
 }
 
 fn cloud(cx: f64, cy: f64, rx: f64, ry: f64, bubbles: usize) -> SubPath {

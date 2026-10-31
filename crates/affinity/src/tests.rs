@@ -520,6 +520,19 @@ mod shapes {
             assert!(points.into_iter().all(|q| q.x.is_finite() && q.y.is_finite() && (lo..=hi).contains(&q.x)), "{sub:?}");
         }
     }
+
+    /// A box with finite corners whose width overflows gave infinite and NaN outline points (raised
+    /// in review of #10473). Such a shape now imports as its box, with a warning.
+    #[test]
+    fn a_shape_too_large_to_compute_imports_as_its_box() {
+        for class in [b"ShCR", b"ShpE", b"ShCg"] {
+            let b = vec![f64::MAX, 0.0, -f64::MAX, 20.0];
+            let node = F::Def(100, vec![tag(b"ShpN")], vec![(tag(b"ShpB"), F::F64s(b)), (tag(b"Shpe"), F::Def(10_100, vec![tag(class)], vec![]))]);
+            let document = read(vec![node], 100);
+            assert_eq!(path(&document).subpaths, [crate::shapes::rectangle(f64::MAX, 0.0, -f64::MAX, 20.0)], "{class:?}");
+            assert!(document.warnings.iter().any(|w| w.contains("too large to compute")), "{:?}", document.warnings);
+        }
+    }
 }
 
 /// Aggregate materialized-pixel admission (#4960). The entry limits bound what the archive
